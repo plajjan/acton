@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.4.1](https://github.com/actonlang/acton/releases/tag/v0.4.1) (2021-08-03)
+
 ### Added
 - `--version --verbose` will print verbose version information
 - internal compiler errors now include information about the C compiler (cc)
