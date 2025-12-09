@@ -630,22 +630,24 @@ jobs:
           echo "VERSION_FROM_DEB=$version" >> "$GITHUB_ENV"
       - name: "Determine container tag & push intent"
         id: container_meta
+        env:
+          GHCR_OWNER: ${{ github.repository_owner }}
         run: |
           ref="${GITHUB_REF}"
+          owner="${GHCR_OWNER:-actonlang}"
           version="${VERSION_FROM_DEB:-unknown}"
+          push=false
+          alias_tag=""
           if [[ "$ref" == refs/tags/v* ]]; then
-            tag="${ref#refs/tags/v}"
             push=true
           elif [[ "$ref" == refs/heads/main ]]; then
-            tag="tip"
             push=true
-          else
-            tag="test-${GITHUB_RUN_ID}"
-            push=false
+            alias_tag="tip"
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version_tag=$version" >> "$GITHUB_OUTPUT"
           echo "push=$push" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          echo "alias_tag=$alias_tag" >> "$GITHUB_OUTPUT"
       - name: "Set up QEMU"
         uses: docker/setup-qemu-action@v3
       - name: "Set up Docker Buildx"
@@ -660,11 +662,13 @@ jobs:
       - name: "Build container image"
         run: |
           set -euo pipefail
-          tag="${{ steps.container_meta.outputs.tag }}"
-          version="${{ steps.container_meta.outputs.version }}"
-          image="ghcr.io/actonlang/acton:${tag}"
-          image_amd64="${image}-amd64"
-          image_arm64="${image}-arm64"
+          version="${{ steps.container_meta.outputs.version_tag }}"
+          owner="${{ steps.container_meta.outputs.owner }}"
+          alias_tag="${{ steps.container_meta.outputs.alias_tag }}"
+          image_base="ghcr.io/${owner}/acton"
+          image_version="${image_base}:${version}"
+          image_amd64="${image_base}:${version}-amd64"
+          image_arm64="${image_base}:${version}-arm64"
           push="${{ steps.container_meta.outputs.push }}"
 
           build_flags=(--file Containerfile --label "org.opencontainers.image.version=${version}")
@@ -684,8 +688,12 @@ jobs:
           build_one "linux/arm64" "$image_arm64" "dist-arm64"
 
           if [[ "$push" == "true" ]]; then
-            docker manifest create "$image" "$image_amd64" "$image_arm64"
-            docker manifest push "$image"
+            docker manifest create "$image_version" "$image_amd64" "$image_arm64"
+            docker manifest push "$image_version"
+            if [[ -n "$alias_tag" ]]; then
+              docker manifest create "${image_base}:${alias_tag}" "$image_amd64" "$image_arm64"
+              docker manifest push "${image_base}:${alias_tag}"
+            fi
           fi
 
   # If we are on the main branch, we'll create or update a pre-release called
