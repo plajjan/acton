@@ -671,7 +671,7 @@ jobs:
           image_arm64="${image_base}:${version}-arm64"
           push="${{ steps.container_meta.outputs.push }}"
 
-          build_flags=(--file Containerfile --label "org.opencontainers.image.version=${version}")
+          build_flags=(--file Containerfile --label "org.opencontainers.image.version=${version}" --provenance=false --sbom=false)
 
           build_one() {
             local platform="$1" tag="$2" dist_dir="$3"
