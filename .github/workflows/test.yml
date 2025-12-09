@@ -667,33 +667,25 @@ jobs:
           alias_tag="${{ steps.container_meta.outputs.alias_tag }}"
           image_base="ghcr.io/${owner}/acton"
           image_version="${image_base}:${version}"
-          image_amd64="${image_base}:${version}-amd64"
-          image_arm64="${image_base}:${version}-arm64"
           push="${{ steps.container_meta.outputs.push }}"
 
-          build_flags=(--file Containerfile --label "org.opencontainers.image.version=${version}" --provenance=false --sbom=false)
-
-          build_one() {
-            local platform="$1" tag="$2" dist_dir="$3"
-            rm -rf dist
-            cp -a "$dist_dir" dist
-            if [[ "$push" == "true" ]]; then
-              docker buildx build "${build_flags[@]}" --platform "$platform" --tag "$tag" --push .
-            else
-              docker buildx build "${build_flags[@]}" --platform "$platform" --tag "$tag" --load .
-            fi
-          }
-
-          build_one "linux/amd64" "$image_amd64" "dist-amd64"
-          build_one "linux/arm64" "$image_arm64" "dist-arm64"
-
           if [[ "$push" == "true" ]]; then
-            docker manifest create "$image_version" "$image_amd64" "$image_arm64"
-            docker manifest push "$image_version"
+            platforms="linux/amd64,linux/arm64"
+          else
+            platforms="linux/amd64"
+          fi
+
+          build_flags=(--file Containerfile --label "org.opencontainers.image.version=${version}" --provenance=false --sbom=false --platform "$platforms")
+
+          rm -rf dist
+          cp -a dist-amd64 dist
+          if [[ "$push" == "true" ]]; then
+            docker buildx build "${build_flags[@]}" --tag "$image_version" --push .
             if [[ -n "$alias_tag" ]]; then
-              docker manifest create "${image_base}:${alias_tag}" "$image_amd64" "$image_arm64"
-              docker manifest push "${image_base}:${alias_tag}"
+              docker buildx imagetools create --tag "${image_base}:${alias_tag}" "$image_version"
             fi
+          else
+            docker buildx build "${build_flags[@]}" --tag "$image_version" --load .
           fi
 
   # If we are on the main branch, we'll create or update a pre-release called

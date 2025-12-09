@@ -1,7 +1,8 @@
 FROM debian:13
 MAINTAINER Kristian Larsson <kristian@spritelink.net>
 
-COPY dist/ /usr/lib/acton/
+ARG TARGETARCH
+COPY dist-${TARGETARCH}/ /usr/lib/acton/
 
 RUN cd /usr/bin \
  && ln -s ../lib/acton/bin/actonc \
