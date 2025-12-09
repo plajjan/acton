@@ -591,21 +591,36 @@ jobs:
     steps:
       - name: "Check out repository code"
         uses: actions/checkout@v5
-      - name: "Download artifacts for Linux x86_64, built on Debian:12"
+      - name: "Download deb artifacts"
         uses: actions/download-artifact@v6
         with:
-          name: acton-debian-12-x86_64
-      - name: "Prepare dist for container build"
+          pattern: acton-debs-*
+          merge-multiple: true
+      - name: "Prepare dists for container build"
         run: |
           set -euo pipefail
-          tarball=$(ls acton-linux-x86_64*.tar.xz | head -n1)
-          tar -xJf "$tarball"
-          rm -rf dist
-          mv acton dist
+          deb_amd64=$(ls deb/acton_*amd64.deb | head -n1)
+          deb_arm64=$(ls deb/acton_*arm64.deb | head -n1)
+          echo "Using debs: $deb_amd64 and $deb_arm64"
+
+          rm -rf work dist-amd64 dist-arm64
+          mkdir -p work/amd64 work/arm64
+          dpkg-deb -x "$deb_amd64" work/amd64
+          dpkg-deb -x "$deb_arm64" work/arm64
+          cp -a work/amd64/usr/lib/acton dist-amd64
+          cp -a work/arm64/usr/lib/acton dist-arm64
+
+          version=$(basename "$deb_amd64")
+          version=${version#acton_}
+          version=${version%_amd64.deb}
+          echo "AMD64_DEB=$deb_amd64" >> "$GITHUB_ENV"
+          echo "ARM64_DEB=$deb_arm64" >> "$GITHUB_ENV"
+          echo "VERSION_FROM_DEB=$version" >> "$GITHUB_ENV"
       - name: "Determine container tag & push intent"
         id: container_meta
         run: |
           ref="${GITHUB_REF}"
+          version="${VERSION_FROM_DEB:-unknown}"
           if [[ "$ref" == refs/tags/v* ]]; then
             tag="${ref#refs/tags/v}"
             push=true
@@ -618,6 +633,9 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "push=$push" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: "Set up QEMU"
+        uses: docker/setup-qemu-action@v3
       - name: "Set up Docker Buildx"
         uses: docker/setup-buildx-action@v3
       - name: "Log in to GHCR"
@@ -631,11 +649,31 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.container_meta.outputs.tag }}"
+          version="${{ steps.container_meta.outputs.version }}"
           image="ghcr.io/actonlang/acton:${tag}"
-          if [[ "${{ steps.container_meta.outputs.push }}" == "true" ]]; then
-            docker buildx build --platform linux/amd64 --file Containerfile --tag "$image" --push .
-          else
-            docker buildx build --platform linux/amd64 --file Containerfile --tag "$image" --load .
+          image_amd64="${image}-amd64"
+          image_arm64="${image}-arm64"
+          push="${{ steps.container_meta.outputs.push }}"
+
+          build_flags=(--file Containerfile --label "org.opencontainers.image.version=${version}")
+
+          build_one() {
+            local platform="$1" tag="$2" dist_dir="$3"
+            rm -rf dist
+            cp -a "$dist_dir" dist
+            if [[ "$push" == "true" ]]; then
+              docker buildx build "${build_flags[@]}" --platform "$platform" --tag "$tag" --push .
+            else
+              docker buildx build "${build_flags[@]}" --platform "$platform" --tag "$tag" --load .
+            fi
+          }
+
+          build_one "linux/amd64" "$image_amd64" "dist-amd64"
+          build_one "linux/arm64" "$image_arm64" "dist-arm64"
+
+          if [[ "$push" == "true" ]]; then
+            docker manifest create "$image" "$image_amd64" "$image_arm64"
+            docker manifest push "$image"
           fi
 
   # If we are on the main branch, we'll create or update a pre-release called
